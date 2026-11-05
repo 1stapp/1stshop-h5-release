@@ -1,0 +1,17 @@
+# 壹号云店 商城（海外站，Cloudflare Pages 部署包）
+
+这是壹号云店商城 H5 的打包结果，供商户部署到自己的 Cloudflare Pages、使用自己的域名。由平台自动发布，请不要直接修改这里的文件（同步更新时会被覆盖）。
+
+## 部署步骤
+
+1. 点右上角 **Fork**，复制到你自己的 GitHub 账号。
+2. 打开 Cloudflare 控制台 → Workers 和 Pages → 创建 → Pages → 连接到 Git，选择你 fork 的仓库：
+   - 分支：`global`
+   - 构建命令：留空
+   - 输出目录：`site`
+3. 部署完成后，在 Pages 项目里绑定你的域名，按提示添加 DNS 记录。
+4. 在商家后台「系统设置 → 商户信息 → 独立域名绑定」填写这个域名并提交，平台审核通过后商城即可访问。
+
+## 更新
+
+平台更新商城后，在 GitHub 上打开你 fork 的仓库，点 **Sync fork → Update branch**，Pages 会自动重新部署。
