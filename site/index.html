@@ -13,14 +13,27 @@
         (coverSupport ? ', viewport-fit=cover' : '') + '" />')
     </script>
     <title></title>
+    <script>
+      // 用上次打开时存下的店铺名和 logo 先设好标题、标签图标（App.vue 存的 h5_head），避免每次刷新先闪平台默认 logo。
+      // 国内站 EdgeOne 中间件已经按域名写好（有 x-seo 标记 / 图标不是默认的）时不动。
+      (function () {
+        try {
+          var h = JSON.parse(localStorage.getItem('h5_head') || 'null');
+          if (!h) return;
+          if (h.title && !document.querySelector('meta[name="x-seo"]')) document.title = h.title;
+          var link = document.querySelector('link[rel="icon"]');
+          if (h.icon && link && /\/static\/logo\.png$/.test(link.getAttribute('href') || '')) link.setAttribute('href', h.icon);
+        } catch (e) {}
+      })();
+    </script>
     <!--preload-links-->
     <!--app-context-->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
-    <script type="module" crossorigin src="/assets/index-rkyvGvma.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BFOemlii.css">
+    <script type="module" crossorigin src="/assets/index-C2OiwBtV.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CGPi_g8m.css">
   </head>
   <body>
-    <div id="app"><!--app-html--></div>
+    <div id="app"><!--app-html--></div>
   </body>
 </html>
