@@ -9,6 +9,8 @@
  *    写进 <head> 再返回。搜索引擎（尤其百度）不执行 JS，只能看到这里写进去的内容。
  * 3. /sitemap.xml、/robots.txt：每个商户自己的。
  * 4. 百度 / Google / Bing / 搜狗站长平台、百度联盟（bdunion.txt）的验证文件：商户在 admin「SEO 设置」上传，同样带域名问 API。
+ * 5. 小程序业务域名（web-view）校验文件（微信 / 抖音 / 小红书的 .txt、支付宝的 32 位 .html）：
+ *    商户在 admin「商家信息 → 合法域名配置」上传，走同一个 site-verify 接口。
  *
  * 商户自己部署到他的 EdgeOne 并绑定自己的域名时，同样带上他的域名来问，API 按 shops.domain 找到商户。
  * 任何一步出错都退回原来的静态页面，不影响商城打开。
@@ -29,6 +31,9 @@ export const config = {
     '^/MP_verify_[A-Za-z0-9]+\\.txt$',
     '^/baidu_verify_[A-Za-z0-9_-]+\\.html$',
     '^/google[0-9a-f]+\\.html$',
+    // 小程序业务域名（web-view）校验文件：微信 / 抖音 / 小红书是 字母数字.txt，支付宝是 32 位十六进制.html
+    '^/[A-Za-z0-9]+\\.txt$',
+    '^/[0-9A-Fa-f]+\\.html$',
     '^/pages/.*',
   ],
 };
@@ -88,7 +93,9 @@ async function handleVerifyFile(context, url, host) {
   });
 }
 
-const SITE_VERIFY_RE = /^\/(baidu_verify_[A-Za-z0-9_-]+\.html|google[0-9a-f]+\.html|BingSiteAuth\.xml|sogousiteverification\.txt|bdunion\.txt)$/;
+// 小程序业务域名校验文件（规则细节在 API 的 routes/public/site-verify.ts）
+const MINIAPP_VERIFY_RE = /^\/([A-Za-z0-9]{6,16}\.txt|[0-9A-Fa-f]{32}\.html)$/;
+const SITE_VERIFY_RE =/^\/(baidu_verify_[A-Za-z0-9_-]+\.html|google[0-9a-f]+\.html|BingSiteAuth\.xml|sogousiteverification\.txt|bdunion\.txt)$/;
 
 /** 搜索引擎验证文件：API 返回什么类型就原样返回；没上传过就交给静态网站 */
 async function handleSiteVerify(url, host) {
@@ -166,6 +173,7 @@ export async function middleware(context) {
     else if (p === '/ads.txt') res = await handleAdsTxt(host);
     else if (p === '/sitemap.xml') res = await handleSitemap(url, host);
     else if (p === '/robots.txt') res = handleRobots(host);
+    else if (MINIAPP_VERIFY_RE.test(p)) res = await handleSiteVerify(url, host);
     else if (request.method === 'GET') res = await handlePage(url, host);
     if (res) return res;
   } catch (e) {
