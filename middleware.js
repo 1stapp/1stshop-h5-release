@@ -78,6 +78,8 @@ function injectSeo(html, seo) {
     seo.image ? `<meta property="og:image" content="${esc(seo.image)}" />` : '',
     seo.url ? `<meta property="og:url" content="${esc(seo.url)}" />` : '',
     seo.siteName ? `<meta property="og:site_name" content="${esc(seo.siteName)}" />` : '',
+    // X（Twitter）读 twitter:card 决定卡片样式，没有时只显示小图
+    `<meta name="twitter:card" content="${seo.image ? 'summary_large_image' : 'summary'}" />`,
   ].filter(Boolean).join('\n    ');
   return /<title>[\s\S]*?<\/title>/i.test(html)
     ? html.replace(/<title>[\s\S]*?<\/title>/i, tags)
