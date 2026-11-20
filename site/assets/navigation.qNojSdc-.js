@@ -1,1 +1,0 @@
-import{am as a,aD as s,Y as e}from"./index-H-oSD9OI.js";function n(n="/pages/index/index"){a().length>1?s():e({url:n})}export{n as s};
