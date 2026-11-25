@@ -1,1 +1,0 @@
-import{d as s,r as e,e as r,h as a,i as t,v as o}from"./index-C9smUNxG.js";import{_ as n}from"./_plugin-vue_export-helper.BCo6x5W8.js";const l=n(s({__name:"FirstFrameCover",setup(s){const n=e(!0);return(s,e)=>{const l=t;return r(),a(l,{class:"first-frame-cover",style:o({display:n.value?"none":"block"})},null,8,["style"])}}}),[["__scopeId","data-v-08a3b5be"]]);export{l as F};
