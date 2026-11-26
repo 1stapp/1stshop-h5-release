@@ -7,7 +7,8 @@
  *    该域名对应的商户在 admin 上传过这个文件就返回内容，否则交给静态网站。
  * 2. 页面（/ 和 /pages/...）：SEO。取静态 index.html，按域名和路径问 API 拿标题、描述、关键词、分享图，
  *    写进 <head> 再返回。搜索引擎（尤其百度）不执行 JS，只能看到这里写进去的内容。
- * 3. /sitemap.xml、/robots.txt：每个商户自己的。
+ *    同时写入 schema.org 结构化数据（JSON-LD）和页面正文的纯文字快照，AI 抓取工具（GPTBot 等）也不执行 JS（GEO）。
+ * 3. /sitemap.xml、/robots.txt、/llms.txt（给 AI 看的店铺简介）：每个商户自己的。
  * 4. 百度 / Google / Bing / 搜狗站长平台、百度联盟（bdunion.txt）的验证文件：商户在 admin「SEO 设置」上传，同样带域名问 API。
  * 5. 小程序业务域名（web-view）校验文件（微信 / 抖音 / 小红书的 .txt、支付宝的 32 位 .html）：
  *    商户在 admin「商家信息 → 合法域名配置」上传，走同一个 site-verify 接口。
@@ -23,6 +24,7 @@ export const config = {
     '/',
     '/sitemap.xml',
     '/robots.txt',
+    '/llms.txt',
     '/BingSiteAuth.xml',
     '/sogousiteverification.txt',
     '/bdunion.txt',
@@ -57,15 +59,47 @@ async function fetchWithTimeout(url, ms) {
 const esc = (s) => String(s || '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-/** 把 SEO 信息写进 index.html 的 <head> */
+/** 结构化数据（schema.org JSON-LD）：JSON 里的 < 转成 \u003c，防止内容里的 </script> 提前结束标签 */
+function ldTags(list) {
+  if (!Array.isArray(list)) return '';
+  return list.filter((x) => x && typeof x === 'object')
+    .map((x) => `<script type="application/ld+json">${JSON.stringify(x).replace(/</g, '\\u003c')}</script>`)
+    .join('\n    ');
+}
+
+/**
+ * 页面正文的纯文字版：给不执行 JS 的搜索引擎 / AI 抓取工具看。放在 #app 外面（商城用 createSSRApp，
+ * 放进 #app 会被当成服务端渲染结果去「激活」），浏览器执行到紧跟着的脚本就删掉，顾客看不到。
+ */
+function snapshotHtml(s) {
+  if (!s || !s.heading) return '';
+  const facts = (Array.isArray(s.facts) ? s.facts : [])
+    .filter((f) => Array.isArray(f) && f[0] && f[1])
+    .map((f) => `<li>${esc(f[0])}: ${esc(f[1])}</li>`).join('');
+  const paras = String(s.text || '').split('\n').filter(Boolean).map((t) => `<p>${esc(t)}</p>`).join('');
+  // 只认站内相对地址（/ 开头，且不是 // 或 /\ 这种会跳到别的网站的写法）
+  const links = (Array.isArray(s.links) ? s.links : [])
+    .filter((l) => l && l.text && /^\/(?![/\\])/.test(String(l.href || '')))
+    .map((l) => `<li><a href="${esc(l.href)}">${esc(l.text)}</a></li>`).join('');
+  return `<main id="seo-snapshot"><h1>${esc(s.heading)}</h1>${facts ? `<ul>${facts}</ul>` : ''}${paras}${links ? `<nav><ul>${links}</ul></nav>` : ''}</main>`
+    + '<script>(function(){var e=document.getElementById("seo-snapshot");if(e)e.parentNode.removeChild(e)})()</script>';
+}
+
+/**
+ * 把 SEO 信息写进 index.html：<head> 里的标题、描述、分享卡片、结构化数据，<body> 开头的正文快照。
+ * 和 1stshop/functions/_middleware.js、cloudflare/h5-router.js 的 injectSeo 一致，改时三处一起改。
+ * replace 一律用函数：内容里的 $& / $1 不会被当成替换模式。
+ */
 function injectSeo(html, seo) {
   // 标签页图标换成商户 logo（静态页里是平台 logo，搜索结果和收藏夹也读这里）
   if (seo.icon) {
     const iconTags = `<link rel="icon" href="${esc(seo.icon)}" />\n    <link rel="apple-touch-icon" href="${esc(seo.icon)}" />`;
     html = /<link[^>]*rel="icon"[^>]*>/i.test(html)
-      ? html.replace(/<link[^>]*rel="icon"[^>]*>/i, iconTags)
-      : html.replace(/<\/head>/i, `    ${iconTags}\n  </head>`);
+      ? html.replace(/<link[^>]*rel="icon"[^>]*>/i, () => iconTags)
+      : html.replace(/<\/head>/i, () => `    ${iconTags}\n  </head>`);
   }
+  const snapshot = snapshotHtml(seo.snapshot);
+  if (snapshot) html = html.replace(/<body[^>]*>/i, (m) => `${m}\n    ${snapshot}`);
   const tags = [
     `<title>${esc(seo.title)}</title>`,
     '<meta name="x-seo" content="1" />', // 告诉前端：标题由服务器写好了，不要再覆盖成店铺名
@@ -80,10 +114,11 @@ function injectSeo(html, seo) {
     seo.siteName ? `<meta property="og:site_name" content="${esc(seo.siteName)}" />` : '',
     // X（Twitter）读 twitter:card 决定卡片样式，没有时只显示小图
     `<meta name="twitter:card" content="${seo.image ? 'summary_large_image' : 'summary'}" />`,
+    ldTags(seo.jsonLd),
   ].filter(Boolean).join('\n    ');
   return /<title>[\s\S]*?<\/title>/i.test(html)
-    ? html.replace(/<title>[\s\S]*?<\/title>/i, tags)
-    : html.replace(/<\/head>/i, `    ${tags}\n  </head>`);
+    ? html.replace(/<title>[\s\S]*?<\/title>/i, () => tags)
+    : html.replace(/<\/head>/i, () => `    ${tags}\n  </head>`);
 }
 
 async function handleVerifyFile(context, url, host) {
@@ -115,6 +150,15 @@ async function handleAdsTxt(host) {
   if (!res.ok) return null;
   return new Response(await res.text(), {
     headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=300' },
+  });
+}
+
+/** llms.txt：给 AI 看的店铺简介（Markdown） */
+async function handleLlmsTxt(host) {
+  const res = await fetchWithTimeout(`${apiBase(host)}/api/public/llms-txt/${encodeURIComponent(host)}`, 5000);
+  if (!res.ok) return null;
+  return new Response(await res.text(), {
+    headers: { 'Content-Type': 'text/markdown; charset=utf-8', 'Cache-Control': 'public, max-age=3600' },
   });
 }
 
@@ -175,6 +219,7 @@ export async function middleware(context) {
     else if (p === '/ads.txt') res = await handleAdsTxt(host);
     else if (p === '/sitemap.xml') res = await handleSitemap(url, host);
     else if (p === '/robots.txt') res = handleRobots(host);
+    else if (p === '/llms.txt') res = await handleLlmsTxt(host);
     else if (MINIAPP_VERIFY_RE.test(p)) res = await handleSiteVerify(url, host);
     else if (request.method === 'GET') res = await handlePage(url, host);
     if (res) return res;
