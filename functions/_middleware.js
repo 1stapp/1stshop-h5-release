@@ -3,7 +3,8 @@
  * 绑定自己域名」的情况，做和国内 1stshop/middleware.js 一样的事：
  *   - 页面（/ 和 /pages/...）：按访问域名和路径问 API 拿标题、描述、分享图，写进 <head>
  *     （分享到 Facebook / WhatsApp 等的预览卡片、搜索引擎都读这里）
- *   - /sitemap.xml、/robots.txt、搜索引擎站长平台验证文件：按商户返回
+ *     同时写入结构化数据（JSON-LD）和正文快照，给不执行 JS 的 AI 抓取工具看（GEO）
+ *   - /sitemap.xml、/robots.txt、/llms.txt、搜索引擎站长平台验证文件：按商户返回
  *   （/ads.txt 在 functions/ads.txt.js）
  *
  * 平台子域名（*.1stshops.com）和 CNAME 到 shop.1stshops.com 的自定义域名先经过 Worker「1stshop-h5-router」
@@ -57,20 +58,53 @@ function robotsTxt(host) {
   return new Response(body, { headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=3600' } });
 }
 
-// 和 1stshop/middleware.js、cloudflare/h5-router.js 的 injectSeo 一致，改时三处一起改
 const esc = (s) => String(s || '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+/** 结构化数据（schema.org JSON-LD）：JSON 里的 < 转成 \u003c，防止内容里的 </script> 提前结束标签 */
+function ldTags(list) {
+  if (!Array.isArray(list)) return '';
+  return list.filter((x) => x && typeof x === 'object')
+    .map((x) => `<script type="application/ld+json">${JSON.stringify(x).replace(/</g, '\\u003c')}</script>`)
+    .join('\n    ');
+}
+
+/**
+ * 页面正文的纯文字版：给不执行 JS 的搜索引擎 / AI 抓取工具看。放在 #app 外面（商城用 createSSRApp，
+ * 放进 #app 会被当成服务端渲染结果去「激活」），浏览器执行到紧跟着的脚本就删掉，顾客看不到。
+ */
+function snapshotHtml(s) {
+  if (!s || !s.heading) return '';
+  const facts = (Array.isArray(s.facts) ? s.facts : [])
+    .filter((f) => Array.isArray(f) && f[0] && f[1])
+    .map((f) => `<li>${esc(f[0])}: ${esc(f[1])}</li>`).join('');
+  const paras = String(s.text || '').split('\n').filter(Boolean).map((t) => `<p>${esc(t)}</p>`).join('');
+  // 只认站内相对地址（/ 开头，且不是 // 或 /\ 这种会跳到别的网站的写法）
+  const links = (Array.isArray(s.links) ? s.links : [])
+    .filter((l) => l && l.text && /^\/(?![/\\])/.test(String(l.href || '')))
+    .map((l) => `<li><a href="${esc(l.href)}">${esc(l.text)}</a></li>`).join('');
+  return `<main id="seo-snapshot"><h1>${esc(s.heading)}</h1>${facts ? `<ul>${facts}</ul>` : ''}${paras}${links ? `<nav><ul>${links}</ul></nav>` : ''}</main>`
+    + '<script>(function(){var e=document.getElementById("seo-snapshot");if(e)e.parentNode.removeChild(e)})()</script>';
+}
+
+/**
+ * 把 SEO 信息写进 index.html：<head> 里的标题、描述、分享卡片、结构化数据，<body> 开头的正文快照。
+ * 和 1stshop/functions/_middleware.js、cloudflare/h5-router.js 的 injectSeo 一致，改时三处一起改。
+ * replace 一律用函数：内容里的 $& / $1 不会被当成替换模式。
+ */
 function injectSeo(html, seo) {
+  // 标签页图标换成商户 logo（静态页里是平台 logo，搜索结果和收藏夹也读这里）
   if (seo.icon) {
     const iconTags = `<link rel="icon" href="${esc(seo.icon)}" />\n    <link rel="apple-touch-icon" href="${esc(seo.icon)}" />`;
     html = /<link[^>]*rel="icon"[^>]*>/i.test(html)
-      ? html.replace(/<link[^>]*rel="icon"[^>]*>/i, iconTags)
-      : html.replace(/<\/head>/i, `    ${iconTags}\n  </head>`);
+      ? html.replace(/<link[^>]*rel="icon"[^>]*>/i, () => iconTags)
+      : html.replace(/<\/head>/i, () => `    ${iconTags}\n  </head>`);
   }
+  const snapshot = snapshotHtml(seo.snapshot);
+  if (snapshot) html = html.replace(/<body[^>]*>/i, (m) => `${m}\n    ${snapshot}`);
   const tags = [
     `<title>${esc(seo.title)}</title>`,
-    '<meta name="x-seo" content="1" />',
+    '<meta name="x-seo" content="1" />', // 告诉前端：标题由服务器写好了，不要再覆盖成店铺名
     seo.description ? `<meta name="description" content="${esc(seo.description)}" />` : '',
     seo.keywords ? `<meta name="keywords" content="${esc(seo.keywords)}" />` : '',
     seo.url ? `<link rel="canonical" href="${esc(seo.url)}" />` : '',
@@ -80,11 +114,13 @@ function injectSeo(html, seo) {
     seo.image ? `<meta property="og:image" content="${esc(seo.image)}" />` : '',
     seo.url ? `<meta property="og:url" content="${esc(seo.url)}" />` : '',
     seo.siteName ? `<meta property="og:site_name" content="${esc(seo.siteName)}" />` : '',
+    // X（Twitter）读 twitter:card 决定卡片样式，没有时只显示小图
     `<meta name="twitter:card" content="${seo.image ? 'summary_large_image' : 'summary'}" />`,
+    ldTags(seo.jsonLd),
   ].filter(Boolean).join('\n    ');
   return /<title>[\s\S]*?<\/title>/i.test(html)
-    ? html.replace(/<title>[\s\S]*?<\/title>/i, tags)
-    : html.replace(/<\/head>/i, `    ${tags}\n  </head>`);
+    ? html.replace(/<title>[\s\S]*?<\/title>/i, () => tags)
+    : html.replace(/<\/head>/i, () => `    ${tags}\n  </head>`);
 }
 
 async function withSeo(pageRes, host, url) {
@@ -116,6 +152,9 @@ export async function onRequest(context) {
       if (res) return res;
     } else if (p === '/robots.txt') {
       return robotsTxt(host);
+    } else if (p === '/llms.txt') {
+      const res = await proxyText(`${API}/api/public/llms-txt/${encodeURIComponent(host)}`, 'text/markdown; charset=utf-8', 3600);
+      if (res) return res;
     } else if (SITE_VERIFY_RE.test(p)) {
       const res = await proxyText(`${API}/api/public/site-verify/${encodeURIComponent(host)}/${encodeURIComponent(p.slice(1))}`, 'text/plain; charset=utf-8', 300);
       if (res) return res;
